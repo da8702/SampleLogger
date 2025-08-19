@@ -9,6 +9,44 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem
 )
 from PyQt5.QtCore import QDate
+import win32print
+from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtGui import QIcon, QFont
+from PyQt5.QtCore import Qt
+
+# Icon paths must be defined before any class/function uses them
+ICON_SVG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'Logo.svg'))
+ICON_ICO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'Logo.ico'))
+
+ZPL_TEMPLATE = """
+^XA
+^MMT
+^PW315
+^LL150
+^LS0
+^BY2,3,66^FT90,125^BCN,,Y,N
+^FH\\^FD>:{{SAMPLE_ID}}^FS
+^PQ1,0,1,Y
+^XZ
+"""
+
+def print_barcode(sample_id):
+    zpl = ZPL_TEMPLATE.replace("{{SAMPLE_ID}}", sample_id)
+    printer_name = win32print.GetDefaultPrinter()
+    try:
+        hPrinter = win32print.OpenPrinter(printer_name)
+        try:
+            hJob = win32print.StartDocPrinter(hPrinter, 1, ("Sample Label", None, "RAW"))
+            win32print.StartPagePrinter(hPrinter)
+            win32print.WritePrinter(hPrinter, zpl.encode())
+            win32print.EndPagePrinter(hPrinter)
+            win32print.EndDocPrinter(hPrinter)
+        finally:
+            win32print.ClosePrinter(hPrinter)
+        return True
+    except Exception as e:
+        print(f"Failed to print barcode for {sample_id}: {e}")
+        return False
 
 NAV_ITEMS = [
     "Dashboard",
@@ -21,6 +59,17 @@ NAV_ITEMS = [
 
 SAMPLE_TYPES = ["serum", "plasma", "peritoneal fluid", "whole blood"]
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'db', 'bloodlogger.db')
+
+# Debug: Print DB path and samples table schema at startup
+print(f"[DEBUG] Using database at: {DB_PATH}")
+try:
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='samples'")
+        schema = cur.fetchone()
+        print(f"[DEBUG] samples table schema: {schema[0] if schema else 'NOT FOUND'}")
+except Exception as e:
+    print(f"[DEBUG] Could not read schema: {e}")
 
 class AddSampleDialog(QDialog):
     def __init__(self, parent=None):
@@ -86,6 +135,11 @@ class AddSampleDialog(QDialog):
                     )
                 )
                 conn.commit()
+            # Print barcode after saving
+            if print_barcode(data["SampleID"]):
+                QMessageBox.information(self, "Barcode Printed", f"Barcode for {data['SampleID']} sent to printer.")
+            else:
+                QMessageBox.warning(self, "Print Error", f"Failed to print barcode for {data['SampleID']}.")
             self.result = data
             self.accept()
         except sqlite3.IntegrityError as e:
@@ -351,81 +405,205 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SampleLogger")
+        self.setWindowIcon(QIcon(ICON_ICO_PATH))
         self.resize(1000, 600)
         self._init_ui()
 
     def _init_ui(self):
-        # Sidebar navigation
-        self.nav_list = QListWidget()
-        self.nav_list.addItems(NAV_ITEMS)
-        self.nav_list.setFixedWidth(180)
-        self.nav_list.currentRowChanged.connect(self.display_page)
-
-        # Main content area (stacked widget)
         self.stack = QStackedWidget()
         self.pages = {}
-        for item in NAV_ITEMS:
-            if item == "Samples":
-                page = self._create_samples_page()
-            elif item == "Cohorts":
-                page = self._create_cohorts_page()
-            else:
-                page = QWidget()
-                layout = QVBoxLayout()
-                label = QLabel(f"<h2>{item}</h2><p>Placeholder for {item} page.</p>")
-                layout.addWidget(label)
-                layout.addStretch()
-                page.setLayout(layout)
+        # Dashboard page
+        dashboard = QWidget()
+        dash_layout = QVBoxLayout()
+        dash_layout.addStretch()
+        btn_font = QFont()
+        btn_font.setPointSize(16)
+        btn_font.setBold(True)
+        btn_size = (300, 80)
+        cohorts_btn = QPushButton("Cohorts")
+        cohorts_btn.setFont(btn_font)
+        cohorts_btn.setFixedSize(*btn_size)
+        cohorts_btn.clicked.connect(lambda: self.stack.setCurrentWidget(self.pages["Cohorts"]))
+        samples_btn = QPushButton("Samples")
+        samples_btn.setFont(btn_font)
+        samples_btn.setFixedSize(*btn_size)
+        samples_btn.clicked.connect(lambda: self.stack.setCurrentWidget(self.pages["Samples"]))
+        lookup_btn = QPushButton("Lookup Sample")
+        lookup_btn.setFont(btn_font)
+        lookup_btn.setFixedSize(*btn_size)
+        lookup_btn.clicked.connect(lambda: self.stack.setCurrentWidget(self.pages["Lookup Sample"]))
+        test_print_btn = QPushButton("Test Print")
+        test_print_btn.setFont(btn_font)
+        test_print_btn.setFixedSize(*btn_size)
+        test_print_btn.clicked.connect(self.test_print_barcode)
+        for btn in [cohorts_btn, samples_btn, lookup_btn, test_print_btn]:
+            dash_layout.addWidget(btn, alignment=Qt.AlignHCenter)
+            dash_layout.addSpacing(30)
+        dash_layout.addStretch()
+        dashboard.setLayout(dash_layout)
+        self.stack.addWidget(dashboard)
+        self.pages["Dashboard"] = dashboard
+        # Other pages
+        for name, create_func in [
+            ("Cohorts", self._create_cohorts_page),
+            ("Samples", self._create_samples_page),
+            ("Lookup Sample", self._create_lookup_sample_page)
+        ]:
+            page = create_func()
+            # Add back button
+            back_btn = QPushButton("Back to Dashboard")
+            back_btn.setFixedWidth(180)
+            back_btn.clicked.connect(lambda _, n="Dashboard": self.stack.setCurrentWidget(self.pages[n]))
+            page.layout().insertWidget(0, back_btn)
             self.stack.addWidget(page)
-            self.pages[item] = page
-
-        # Layout
-        main_layout = QHBoxLayout()
-        main_layout.addWidget(self.nav_list)
-        main_layout.addWidget(self.stack)
-
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
-
-        # Status bar
+            self.pages[name] = page
+        self.setCentralWidget(self.stack)
         self.status = QStatusBar()
         self.setStatusBar(self.status)
         self.status.showMessage("Ready")
-
-        # Default to Dashboard
-        self.nav_list.setCurrentRow(0)
+        self.stack.setCurrentWidget(self.pages["Dashboard"])
 
     def _create_samples_page(self):
         page = QWidget()
         layout = QVBoxLayout()
-        label = QLabel("<h2>Samples</h2><p>Placeholder for Samples page.</p>")
+        label = QLabel("<h2>Samples</h2>")
         layout.addWidget(label)
+        self.samples_table = QTableWidget()
+        self.samples_table.setColumnCount(5)
+        self.samples_table.setHorizontalHeaderLabels([
+            "Sample ID", "Sample Type", "Experimenter", "Collection Date", "Cohort Name"
+        ])
+        self.samples_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.samples_table.setSelectionMode(QTableWidget.MultiSelection)
+        self.samples_table.setSortingEnabled(True)
+        layout.addWidget(self.samples_table)
+        btn_layout = QHBoxLayout()
         add_btn = QPushButton("Add Sample")
         add_btn.clicked.connect(self.open_add_sample_dialog)
-        layout.addWidget(add_btn)
+        btn_layout.addWidget(add_btn)
+        print_btn = QPushButton("Print Barcode")
+        print_btn.clicked.connect(self.print_selected_barcodes)
+        btn_layout.addWidget(print_btn)
+        del_btn = QPushButton("Delete")
+        del_btn.clicked.connect(self.delete_selected_samples)
+        btn_layout.addWidget(del_btn)
+        layout.addLayout(btn_layout)
         layout.addStretch()
         page.setLayout(layout)
+        self.refresh_samples_table()
         return page
+
+    def print_selected_barcodes(self):
+        selected = self.samples_table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.information(self, "Print Barcodes", "No samples selected.")
+            return
+        sample_ids = [self.samples_table.item(row.row(), 0).text() for row in selected]
+        for sid in sample_ids:
+            print_barcode(sid)
+        self.status.showMessage(f"Sent {len(sample_ids)} barcode(s) to printer.")
+
+    def delete_selected_samples(self):
+        selected = self.samples_table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.information(self, "Delete Samples", "No samples selected.")
+            return
+        sample_ids = [self.samples_table.item(row.row(), 0).text() for row in selected]
+        msg = "Are you sure you want to delete the following samples?\n" + ", ".join(sample_ids)
+        if QMessageBox.question(self, "Confirm Delete", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                for sid in sample_ids:
+                    cur.execute("DELETE FROM samples WHERE animal_id = ?", (sid,))
+                conn.commit()
+            self.refresh_samples_table()
+            self.status.showMessage(f"Deleted {len(sample_ids)} sample(s).")
+
+    def _create_cohorts_page(self):
+        page = QWidget()
+        layout = QVBoxLayout()
+        label = QLabel("<h2>Cohorts</h2>")
+        layout.addWidget(label)
+        self.cohorts_table = QTableWidget()
+        self.cohorts_table.setColumnCount(4)
+        self.cohorts_table.setHorizontalHeaderLabels([
+            "Cohort Name", "Description", "Date Created", "# Samples"
+        ])
+        self.cohorts_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.cohorts_table.setSelectionMode(QTableWidget.MultiSelection)
+        self.cohorts_table.setSortingEnabled(True)
+        layout.addWidget(self.cohorts_table)
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("Create Cohort")
+        add_btn.clicked.connect(self.open_create_cohort_dialog)
+        btn_layout.addWidget(add_btn)
+        del_btn = QPushButton("Delete")
+        del_btn.clicked.connect(self.delete_selected_cohorts)
+        btn_layout.addWidget(del_btn)
+        layout.addLayout(btn_layout)
+        layout.addStretch()
+        page.setLayout(layout)
+        self.refresh_cohorts_table()
+        return page
+
+    def delete_selected_cohorts(self):
+        selected = self.cohorts_table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.information(self, "Delete Cohorts", "No cohorts selected.")
+            return
+        cohort_names = [self.cohorts_table.item(row.row(), 0).text() for row in selected]
+        msg = "Are you sure you want to delete the following cohorts?\n" + ", ".join(cohort_names) + "\n(All samples in these cohorts will also be deleted.)"
+        if QMessageBox.question(self, "Confirm Delete", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                for name in cohort_names:
+                    cur.execute("DELETE FROM cohorts WHERE name = ?", (name,))
+                conn.commit()
+            self.refresh_cohorts_table()
+            self.refresh_samples_table()
+            self.status.showMessage(f"Deleted {len(cohort_names)} cohort(s) and their samples.")
+
+    def refresh_samples_table(self):
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT s.animal_id, s.species, s.sex, s.date_added, c.name
+                FROM samples s
+                LEFT JOIN cohorts c ON s.cohort_id = c.id
+                ORDER BY s.id DESC
+            """)
+            rows = cur.fetchall()
+        self.samples_table.setRowCount(len(rows))
+        for row_idx, row in enumerate(rows):
+            for col_idx, value in enumerate(row):
+                self.samples_table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
+        self.samples_table.resizeColumnsToContents()
+
+    def refresh_cohorts_table(self):
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, description, date_created FROM cohorts ORDER BY id DESC")
+            rows = cur.fetchall()
+            # Get sample counts for each cohort
+            sample_counts = {}
+            for row in rows:
+                cur.execute("SELECT COUNT(*) FROM samples WHERE cohort_id = ?", (row[0],))
+                sample_counts[row[0]] = cur.fetchone()[0]
+        self.cohorts_table.setRowCount(len(rows))
+        for row_idx, row in enumerate(rows):
+            cohort_id, name, desc, date_created = row
+            count = sample_counts.get(cohort_id, 0)
+            for col_idx, value in enumerate([name, desc, date_created, count]):
+                self.cohorts_table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
+        self.cohorts_table.resizeColumnsToContents()
 
     def open_add_sample_dialog(self):
         dialog = AddSampleDialog(self)
         if dialog.exec_():
             self.status.showMessage("Sample added to database.")
+            self.refresh_samples_table()
         else:
             self.status.showMessage("Sample addition cancelled.")
-
-    def _create_cohorts_page(self):
-        page = QWidget()
-        layout = QVBoxLayout()
-        label = QLabel("<h2>Cohorts</h2><p>Placeholder for Cohorts page.</p>")
-        layout.addWidget(label)
-        add_btn = QPushButton("Create Cohort")
-        add_btn.clicked.connect(self.open_create_cohort_dialog)
-        layout.addWidget(add_btn)
-        layout.addStretch()
-        page.setLayout(layout)
-        return page
 
     def open_create_cohort_dialog(self):
         dialog = CreateCohortDialog(self)
@@ -457,8 +635,12 @@ class MainWindow(QMainWindow):
                                 data["collection_date"]
                             )
                         )
+                        # Print barcode for each sample
+                        print_barcode(sid)
                     conn.commit()
-                self.status.showMessage(f"Cohort '{data['name']}' and {len(data['sample_ids'])} samples created.")
+                self.status.showMessage(f"Cohort '{data['name']}' and {len(data['sample_ids'])} samples created and barcodes printed.")
+                self.refresh_cohorts_table()
+                self.refresh_samples_table()
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to create cohort: {e}")
                 self.status.showMessage("Error creating cohort.")
@@ -468,6 +650,61 @@ class MainWindow(QMainWindow):
     def display_page(self, index):
         self.stack.setCurrentIndex(index)
         self.status.showMessage(f"Viewing {NAV_ITEMS[index]}")
+
+    def _create_lookup_sample_page(self):
+        page = QWidget()
+        layout = QVBoxLayout()
+        label = QLabel("<h2>Lookup Sample</h2><p>Scan a barcode or enter a SampleID below:</p>")
+        layout.addWidget(label)
+        self.lookup_input = QLineEdit()
+        self.lookup_input.setPlaceholderText("Scan or enter SampleID...")
+        self.lookup_input.returnPressed.connect(self.lookup_sample)
+        layout.addWidget(self.lookup_input)
+        self.lookup_result = QLabel()
+        layout.addWidget(self.lookup_result)
+        layout.addStretch()
+        page.setLayout(layout)
+        # Autofocus when page is shown
+        def focus_input():
+            self.lookup_input.setFocus()
+        page.showEvent = lambda event: focus_input()
+        return page
+
+    def lookup_sample(self):
+        sample_id = self.lookup_input.text().strip()
+        if not sample_id:
+            self.lookup_result.setText("")
+            return
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM samples WHERE animal_id = ? OR barcode_value = ?", (sample_id, sample_id))
+            sample = cur.fetchone()
+            if not sample:
+                self.lookup_result.setText(f"Sample '{sample_id}' not found.")
+                return
+            # Get cohort info
+            cohort = None
+            if sample[1]:
+                cur.execute("SELECT * FROM cohorts WHERE id = ?", (sample[1],))
+                cohort = cur.fetchone()
+            # Display info
+            info = f"<b>Sample ID:</b> {sample[2]}<br>"
+            info += f"<b>Sample Type:</b> {sample[3]}<br>"
+            info += f"<b>Experimenter:</b> {sample[4]}<br>"
+            info += f"<b>Notes:</b> {sample[5]}<br>"
+            info += f"<b>Barcode Value:</b> {sample[6]}<br>"
+            info += f"<b>Collection Date:</b> {sample[7]}<br>"
+            if cohort:
+                info += f"<hr><b>Cohort:</b> {cohort[1]}<br>"
+                info += f"<b>Description:</b> {cohort[2]}<br>"
+                info += f"<b>Date Created:</b> {cohort[3]}<br>"
+            self.lookup_result.setText(info)
+
+    def test_print_barcode(self):
+        if print_barcode("Test"):
+            self.status.showMessage("Test barcode sent to printer.")
+        else:
+            self.status.showMessage("Failed to print test barcode.")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

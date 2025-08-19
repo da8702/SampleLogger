@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS cohorts (
 -- Samples table
 CREATE TABLE IF NOT EXISTS samples (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cohort_id INTEGER NOT NULL,
+    cohort_id INTEGER,  -- allow NULL
     animal_id TEXT NOT NULL,
     species TEXT,
     sex TEXT,
