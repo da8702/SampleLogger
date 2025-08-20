@@ -1,6 +1,6 @@
 import win32print
 
-# ZPL for 1.05 x 0.50 inch, 300 dpi label, using user template, SampleID DA213
+# ZPL for 1.05 x 0.50 inch, 300 dpi label, standard barcode width, SampleID DA001
 zpl = """
 ^XA
 ^MMT
@@ -8,7 +8,7 @@ zpl = """
 ^LL150
 ^LS0
 ^BY2,3,66^FT90,125^BCN,,Y,N
-^FH\\^FD>:DA213^FS
+^FH\\^FD>:DA001^FS
 ^PQ1,0,1,Y
 ^XZ
 """

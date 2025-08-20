@@ -1,6 +1,7 @@
 import sys
 import os
 import sqlite3
+import shutil
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QListWidget, QStackedWidget,
     QHBoxLayout, QVBoxLayout, QLabel, QStatusBar, QPushButton, QDialog,
@@ -19,12 +20,30 @@ ICON_SVG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'a
 ICON_ICO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'Logo.ico'))
 
 ZPL_TEMPLATE = """
+CT~~CD,~CC^~CT~
+^XA
+~TA000
+~JSN
+^LT0
+^MNW
+^MTT
+^PON
+^PMN
+^LH0,0
+^JMA
+^PR4,4
+~SD30
+^JUS
+^LRN
+^CI27
+^PA0,1,1,0
+^XZ
 ^XA
 ^MMT
 ^PW315
 ^LL150
 ^LS0
-^BY2,3,66^FT90,125^BCN,,Y,N
+^BY2,3,87^FT78,128^BCN,,Y,N
 ^FH\\^FD>:{{SAMPLE_ID}}^FS
 ^PQ1,0,1,Y
 ^XZ
@@ -58,7 +77,26 @@ NAV_ITEMS = [
 ]
 
 SAMPLE_TYPES = ["serum", "plasma", "peritoneal fluid", "whole blood"]
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'db', 'bloodlogger.db')
+
+def get_db_path():
+    exe_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    db_dir = os.path.join(exe_dir, 'db')
+    os.makedirs(db_dir, exist_ok=True)
+    db_path = os.path.join(db_dir, 'bloodlogger.db')
+    # Find the template in the right place (PyInstaller or dev)
+    if hasattr(sys, '_MEIPASS'):
+        template_path = os.path.join(sys._MEIPASS, 'db', 'bloodlogger_template.db')
+    else:
+        template_path = os.path.join(db_dir, 'bloodlogger_template.db')
+    # Only copy if db doesn't exist and template does
+    if not os.path.exists(db_path):
+        if os.path.exists(template_path):
+            shutil.copy(template_path, db_path)
+        else:
+            raise RuntimeError(f"Template DB not found at {template_path}")
+    return db_path
+
+DB_PATH = get_db_path()
 
 # Debug: Print DB path and samples table schema at startup
 print(f"[DEBUG] Using database at: {DB_PATH}")
