@@ -401,6 +401,149 @@ class CreateCohortDialog(QDialog):
         else:
             QMessageBox.information(self, "Assignment Mode", "Please select an assignment mode.")
 
+class CohortSamplesDialog(QDialog):
+    def __init__(self, cohort_name, samples, parent=None, main_window=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Samples in Cohort: {cohort_name}")
+        self.setMinimumWidth(600)
+        self.cohort_name = cohort_name
+        self.main_window = main_window  # Reference to MainWindow for refreshing
+        self.layout = QVBoxLayout(self)
+        label = QLabel(f"<b>Cohort:</b> {cohort_name}")
+        self.layout.addWidget(label)
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels([
+            "Sample ID", "Sample Type", "Experimenter", "Collection Date", "Notes"
+        ])
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.MultiSelection)
+        self.table.setSortingEnabled(True)
+        self.table.cellDoubleClicked.connect(self.edit_sample)
+        self.layout.addWidget(self.table)
+        btn_layout = QHBoxLayout()
+        self.delete_btn = QPushButton("Delete")
+        self.delete_btn.clicked.connect(self.delete_selected_samples)
+        btn_layout.addWidget(self.delete_btn)
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
+        self.layout.addLayout(btn_layout)
+        self.refresh_table(samples)
+    def refresh_table(self, samples=None):
+        if samples is None:
+            # Query fresh samples for this cohort
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM cohorts WHERE name = ?", (self.cohort_name,))
+                result = cur.fetchone()
+                if not result:
+                    return
+                cohort_id = result[0]
+                cur.execute("""
+                    SELECT animal_id, species, sex, date_added, notes
+                    FROM samples WHERE cohort_id = ? ORDER BY id DESC
+                """, (cohort_id,))
+                samples = cur.fetchall()
+        self.table.setRowCount(len(samples))
+        for row_idx, row in enumerate(samples):
+            for col_idx, value in enumerate(row):
+                self.table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
+        self.table.resizeColumnsToContents()
+    def edit_sample(self, row, col):
+        sample_id = self.table.item(row, 0).text()
+        dlg = EditSampleDialog(sample_id, self)
+        if dlg.exec_():
+            self.refresh_table()
+            if self.main_window:
+                self.main_window.refresh_cohorts_table()
+    def delete_selected_samples(self):
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.information(self, "Delete Samples", "No samples selected.")
+            return
+        sample_ids = [self.table.item(row.row(), 0).text() for row in selected]
+        msg = "Are you sure you want to delete the following samples?\n" + ", ".join(sample_ids)
+        if QMessageBox.question(self, "Confirm Delete", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                for sid in sample_ids:
+                    cur.execute("DELETE FROM samples WHERE animal_id = ?", (sid,))
+                conn.commit()
+            self.refresh_table()
+            if self.main_window:
+                self.main_window.refresh_cohorts_table()
+
+class EditSampleDialog(QDialog):
+    def __init__(self, sample_id, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Edit Sample: {sample_id}")
+        self.setMinimumWidth(400)
+        layout = QFormLayout(self)
+        # Fetch sample info
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT animal_id, species, sex, date_added, notes, cohort_id FROM samples WHERE animal_id = ?", (sample_id,))
+            sample = cur.fetchone()
+        if not sample:
+            QMessageBox.critical(self, "Error", "Sample not found.")
+            self.reject()
+            return
+        self.sample_id = QLineEdit(sample[0])
+        self.sample_type = QComboBox()
+        self.sample_type.addItems(SAMPLE_TYPES)
+        if sample[1] in SAMPLE_TYPES:
+            self.sample_type.setCurrentText(sample[1])
+        self.experimenter = QLineEdit(sample[2])
+        self.collection_date = QDateEdit()
+        self.collection_date.setCalendarPopup(True)
+        self.collection_date.setDate(QDate.fromString(sample[3], "yyyy-MM-dd"))
+        self.notes = QTextEdit(sample[4] if sample[4] else "")
+        self.notes.setFixedHeight(60)
+        self.cohort_id = sample[5]
+        layout.addRow("Sample ID", self.sample_id)
+        layout.addRow("Sample Type", self.sample_type)
+        layout.addRow("Experimenter", self.experimenter)
+        layout.addRow("Collection Date", self.collection_date)
+        layout.addRow("Notes", self.notes)
+        btn_layout = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self.save)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addRow(btn_layout)
+        self.setLayout(layout)
+        self.original_id = sample[0]
+        self.result = None
+    def save(self):
+        new_id = self.sample_id.text().strip()
+        sample_type = self.sample_type.currentText()
+        experimenter = self.experimenter.text().strip()
+        collection_date = self.collection_date.date().toString("yyyy-MM-dd")
+        notes = self.notes.toPlainText().strip()
+        if not new_id or not experimenter:
+            QMessageBox.warning(self, "Missing Data", "Sample ID and Experimenter are required.")
+            return
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    UPDATE samples SET animal_id=?, species=?, sex=?, notes=?, date_added=? WHERE animal_id=?
+                    """,
+                    (new_id, sample_type, experimenter, notes, collection_date, self.original_id)
+                )
+                conn.commit()
+            self.result = new_id
+            self.accept()
+        except sqlite3.IntegrityError as e:
+            QMessageBox.critical(self, "Database Error", f"Could not update sample: {e}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {e}")
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -476,6 +619,8 @@ class MainWindow(QMainWindow):
         self.samples_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.samples_table.setSelectionMode(QTableWidget.MultiSelection)
         self.samples_table.setSortingEnabled(True)
+        self.samples_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.samples_table.cellDoubleClicked.connect(self.open_sample_details_dialog)
         layout.addWidget(self.samples_table)
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("Add Sample")
@@ -527,11 +672,13 @@ class MainWindow(QMainWindow):
         self.cohorts_table = QTableWidget()
         self.cohorts_table.setColumnCount(4)
         self.cohorts_table.setHorizontalHeaderLabels([
-            "Cohort Name", "Description", "Date Created", "# Samples"
+            "Cohort Name", "Experimenter", "Date Created", "# Samples"
         ])
         self.cohorts_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.cohorts_table.setSelectionMode(QTableWidget.MultiSelection)
         self.cohorts_table.setSortingEnabled(True)
+        self.cohorts_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.cohorts_table.cellDoubleClicked.connect(self.open_cohort_samples_dialog)
         layout.addWidget(self.cohorts_table)
         btn_layout = QHBoxLayout()
         add_btn = QPushButton("Create Cohort")
@@ -545,6 +692,30 @@ class MainWindow(QMainWindow):
         page.setLayout(layout)
         self.refresh_cohorts_table()
         return page
+
+    def view_cohort_samples(self):
+        selected = self.cohorts_table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.information(self, "View Samples", "No cohort selected.")
+            return
+        row = selected[0].row()
+        cohort_name = self.cohorts_table.item(row, 0).text()
+        # Get cohort id by name
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM cohorts WHERE name = ?", (cohort_name,))
+            result = cur.fetchone()
+            if not result:
+                QMessageBox.warning(self, "Error", "Cohort not found in database.")
+                return
+            cohort_id = result[0]
+            cur.execute("""
+                SELECT animal_id, species, sex, date_added, notes
+                FROM samples WHERE cohort_id = ? ORDER BY id DESC
+            """, (cohort_id,))
+            samples = cur.fetchall()
+        dlg = CohortSamplesDialog(cohort_name, samples, self)
+        dlg.exec_()
 
     def delete_selected_cohorts(self):
         selected = self.cohorts_table.selectionModel().selectedRows()
@@ -591,9 +762,9 @@ class MainWindow(QMainWindow):
                 sample_counts[row[0]] = cur.fetchone()[0]
         self.cohorts_table.setRowCount(len(rows))
         for row_idx, row in enumerate(rows):
-            cohort_id, name, desc, date_created = row
+            cohort_id, name, experimenter, date_created = row
             count = sample_counts.get(cohort_id, 0)
-            for col_idx, value in enumerate([name, desc, date_created, count]):
+            for col_idx, value in enumerate([name, experimenter, date_created, count]):
                 self.cohorts_table.setItem(row_idx, col_idx, QTableWidgetItem(str(value) if value is not None else ""))
         self.cohorts_table.resizeColumnsToContents()
 
@@ -674,6 +845,8 @@ class MainWindow(QMainWindow):
         sample_id = self.lookup_input.text().strip()
         if not sample_id:
             self.lookup_result.setText("")
+            self.lookup_input.clear()
+            self.lookup_input.setFocus()
             return
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
@@ -681,6 +854,8 @@ class MainWindow(QMainWindow):
             sample = cur.fetchone()
             if not sample:
                 self.lookup_result.setText(f"Sample '{sample_id}' not found.")
+                self.lookup_input.clear()
+                self.lookup_input.setFocus()
                 return
             # Get cohort info
             cohort = None
@@ -696,15 +871,70 @@ class MainWindow(QMainWindow):
             info += f"<b>Collection Date:</b> {sample[7]}<br>"
             if cohort:
                 info += f"<hr><b>Cohort:</b> {cohort[1]}<br>"
-                info += f"<b>Description:</b> {cohort[2]}<br>"
+                info += f"<b>Experimenter:</b> {cohort[2]}<br>"
                 info += f"<b>Date Created:</b> {cohort[3]}<br>"
             self.lookup_result.setText(info)
+        self.lookup_input.clear()
+        self.lookup_input.setFocus()
 
     def test_print_barcode(self):
         if print_barcode("Test"):
             self.status.showMessage("Test barcode sent to printer.")
         else:
             self.status.showMessage("Failed to print test barcode.")
+
+    def open_cohort_samples_dialog(self, row, col):
+        cohort_name = self.cohorts_table.item(row, 0).text()
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM cohorts WHERE name = ?", (cohort_name,))
+            result = cur.fetchone()
+            if not result:
+                QMessageBox.warning(self, "Error", "Cohort not found in database.")
+                return
+            cohort_id = result[0]
+            cur.execute("""
+                SELECT animal_id, species, sex, date_added, notes
+                FROM samples WHERE cohort_id = ? ORDER BY id DESC
+            """, (cohort_id,))
+            samples = cur.fetchall()
+        dlg = CohortSamplesDialog(cohort_name, samples, self)
+        dlg.exec_()
+
+    def open_sample_details_dialog(self, row, col):
+        sample_id = self.samples_table.item(row, 0).text()
+        dlg = EditSampleDialog(sample_id, self)
+        if dlg.exec_():
+            self.refresh_samples_table()
+
+    def edit_cohort_dialog(self, row, col):
+        cohort_name = self.cohorts_table.item(row, 0).text()
+        dlg = EditPlaceholderDialog(f"Edit Cohort: {cohort_name}", self)
+        dlg.exec_()
+
+    def edit_sample_dialog(self, row, col):
+        sample_id = self.samples_table.item(row, 0).text()
+        dlg = EditPlaceholderDialog(f"Edit Sample: {sample_id}", self)
+        dlg.exec_()
+
+    def view_sample_details(self):
+        selected = self.samples_table.selectionModel().selectedRows()
+        if not selected:
+            QMessageBox.information(self, "View Details", "No sample selected.")
+            return
+        row = selected[0].row()
+        sample_id = self.samples_table.item(row, 0).text()
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT animal_id, species, sex, date_added, notes FROM samples WHERE animal_id = ?", (sample_id,))
+            sample = cur.fetchone()
+        if sample:
+            dlg = CohortSamplesDialog(f"Sample: {sample_id}", [sample], self)
+            dlg.exec_()
+
+    def eventFilter(self, obj, event):
+        # Remove triple-click logic, keep only default event handling
+        return super().eventFilter(obj, event)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
