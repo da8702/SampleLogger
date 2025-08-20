@@ -19,6 +19,12 @@ from PyQt5.QtCore import Qt
 ICON_SVG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'Logo.svg'))
 ICON_ICO_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'assets', 'Logo.ico'))
 
+def resource_path(relative_path):
+    # Get absolute path to resource, works for dev and for PyInstaller
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
+
 ZPL_TEMPLATE = """
 CT~~CD,~CC^~CT~
 ^XA
@@ -586,7 +592,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SampleLogger")
-        self.setWindowIcon(QIcon(ICON_ICO_PATH))
+        self.setWindowIcon(QIcon(resource_path('assets/Logo.ico')))
         self.resize(1000, 600)
         self._init_ui()
 
