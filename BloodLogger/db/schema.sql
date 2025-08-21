@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS cohorts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    experimenter TEXT,
     description TEXT,
     date_created TEXT DEFAULT CURRENT_TIMESTAMP
 );

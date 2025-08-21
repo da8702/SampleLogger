@@ -797,7 +797,7 @@ class MainWindow(QMainWindow):
     def refresh_cohorts_table(self):
         with sqlite3.connect(DB_PATH) as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, name, description, date_created FROM cohorts ORDER BY id DESC")
+            cur.execute("SELECT id, name, experimenter, date_created FROM cohorts ORDER BY id DESC")
             rows = cur.fetchall()
             # Get sample counts for each cohort
             sample_counts = {}
@@ -829,8 +829,8 @@ class MainWindow(QMainWindow):
                 with sqlite3.connect(DB_PATH) as conn:
                     cur = conn.cursor()
                     cur.execute(
-                        "INSERT INTO cohorts (name, description, date_created) VALUES (?, ?, ?)",
-                        (data["name"], data["notes"], data["collection_date"])
+                        "INSERT INTO cohorts (name, experimenter, date_created) VALUES (?, ?, ?)",
+                        (data["name"], data["experimenter"], data["collection_date"])
                     )
                     cohort_id = cur.lastrowid
                     for sid in data["sample_ids"]:

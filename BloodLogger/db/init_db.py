@@ -1,15 +1,16 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'bloodlogger.db')
-SCHEMA_PATH = os.path.join(os.path.dirname(__file__), 'schema.sql')
+TEMPLATE_DB = os.path.join(os.path.dirname(__file__), '../ui/db/bloodlogger_template.db')
+SCHEMA = os.path.join(os.path.dirname(__file__), 'schema.sql')
 
-def initialize_database():
-    with sqlite3.connect(DB_PATH) as conn:
-        with open(SCHEMA_PATH, 'r') as f:
-            schema = f.read()
-        conn.executescript(schema)
-    print(f"Database initialized at {DB_PATH}")
+def create_template_db():
+    os.makedirs(os.path.dirname(TEMPLATE_DB), exist_ok=True)
+    conn = sqlite3.connect(TEMPLATE_DB)
+    with open(SCHEMA, 'r') as f:
+        conn.executescript(f.read())
+    conn.close()
+    print(f"Template DB created at: {TEMPLATE_DB}")
 
-if __name__ == "__main__":
-    initialize_database()
+if __name__ == '__main__':
+    create_template_db()
