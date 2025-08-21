@@ -107,13 +107,22 @@ DB_PATH = get_db_path()
 # Debug: Print DB path and samples table schema at startup
 print(f"[DEBUG] Using database at: {DB_PATH}")
 try:
-    with sqlite3.connect(DB_PATH) as conn:
+    with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='samples'")
         schema = cur.fetchone()
         print(f"[DEBUG] samples table schema: {schema[0] if schema else 'NOT FOUND'}")
 except Exception as e:
     print(f"[DEBUG] Could not read schema: {e}")
+
+# Helper function to get a SQLite connection with foreign keys enabled
+def get_db_connection():
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("PRAGMA foreign_keys = ON;")
+    cur.close()
+    return conn
 
 class AddSampleDialog(QDialog):
     def __init__(self, parent=None):
@@ -160,7 +169,7 @@ class AddSampleDialog(QDialog):
             return
         # Save to database
         try:
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     """
@@ -478,7 +487,7 @@ class CohortSamplesDialog(QDialog):
     def refresh_table(self, samples=None):
         if samples is None:
             # Query fresh samples for this cohort
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cur = conn.cursor()
                 cur.execute("SELECT id FROM cohorts WHERE name = ?", (self.cohort_name,))
                 result = cur.fetchone()
@@ -510,7 +519,7 @@ class CohortSamplesDialog(QDialog):
         sample_ids = [self.table.item(row.row(), 0).text() for row in selected]
         msg = "Are you sure you want to delete the following samples?\n" + ", ".join(sample_ids)
         if QMessageBox.question(self, "Confirm Delete", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cur = conn.cursor()
                 for sid in sample_ids:
                     cur.execute("DELETE FROM samples WHERE animal_id = ?", (sid,))
@@ -518,6 +527,7 @@ class CohortSamplesDialog(QDialog):
             self.refresh_table()
             if self.main_window:
                 self.main_window.refresh_cohorts_table()
+                self.main_window.refresh_samples_table()
 
 class EditSampleDialog(QDialog):
     def __init__(self, sample_id, parent=None):
@@ -526,7 +536,7 @@ class EditSampleDialog(QDialog):
         self.setMinimumWidth(400)
         layout = QFormLayout(self)
         # Fetch sample info
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT animal_id, species, sex, date_added, notes, cohort_id FROM samples WHERE animal_id = ?", (sample_id,))
             sample = cur.fetchone()
@@ -572,7 +582,7 @@ class EditSampleDialog(QDialog):
             QMessageBox.warning(self, "Missing Data", "Sample ID and Experimenter are required.")
             return
         try:
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cur = conn.cursor()
                 cur.execute(
                     """
@@ -649,6 +659,16 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
         self.status.showMessage("Ready")
         self.stack.setCurrentWidget(self.pages["Dashboard"])
+        # Refresh samples table whenever the Samples page is shown
+        self.stack.currentChanged.connect(self._on_page_changed)
+
+    def _on_page_changed(self, index):
+        # Find the name of the current page
+        for name, page in self.pages.items():
+            if self.stack.widget(index) is page:
+                if name == "Samples":
+                    self.refresh_samples_table()
+                break
 
     def _create_samples_page(self):
         page = QWidget()
@@ -700,7 +720,7 @@ class MainWindow(QMainWindow):
         sample_ids = [self.samples_table.item(row.row(), 0).text() for row in selected]
         msg = "Are you sure you want to delete the following samples?\n" + ", ".join(sample_ids)
         if QMessageBox.question(self, "Confirm Delete", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cur = conn.cursor()
                 for sid in sample_ids:
                     cur.execute("DELETE FROM samples WHERE animal_id = ?", (sid,))
@@ -745,7 +765,7 @@ class MainWindow(QMainWindow):
         row = selected[0].row()
         cohort_name = self.cohorts_table.item(row, 0).text()
         # Get cohort id by name
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT id FROM cohorts WHERE name = ?", (cohort_name,))
             result = cur.fetchone()
@@ -769,7 +789,7 @@ class MainWindow(QMainWindow):
         cohort_names = [self.cohorts_table.item(row.row(), 0).text() for row in selected]
         msg = "Are you sure you want to delete the following cohorts?\n" + ", ".join(cohort_names) + "\n(All samples in these cohorts will also be deleted.)"
         if QMessageBox.question(self, "Confirm Delete", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            with sqlite3.connect(DB_PATH) as conn:
+            with get_db_connection() as conn:
                 cur = conn.cursor()
                 for name in cohort_names:
                     cur.execute("DELETE FROM cohorts WHERE name = ?", (name,))
@@ -779,7 +799,7 @@ class MainWindow(QMainWindow):
             self.status.showMessage(f"Deleted {len(cohort_names)} cohort(s) and their samples.")
 
     def refresh_samples_table(self):
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("""
                 SELECT s.animal_id, s.species, s.sex, s.date_added, c.name
@@ -795,7 +815,7 @@ class MainWindow(QMainWindow):
         self.samples_table.resizeColumnsToContents()
 
     def refresh_cohorts_table(self):
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT id, name, experimenter, date_created FROM cohorts ORDER BY id DESC")
             rows = cur.fetchall()
@@ -826,7 +846,7 @@ class MainWindow(QMainWindow):
             # Save cohort and samples to database
             data = dialog.result
             try:
-                with sqlite3.connect(DB_PATH) as conn:
+                with get_db_connection() as conn:
                     cur = conn.cursor()
                     cur.execute(
                         "INSERT INTO cohorts (name, experimenter, date_created) VALUES (?, ?, ?)",
@@ -892,7 +912,7 @@ class MainWindow(QMainWindow):
             self.lookup_input.clear()
             self.lookup_input.setFocus()
             return
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT * FROM samples WHERE animal_id = ? OR barcode_value = ?", (sample_id, sample_id))
             sample = cur.fetchone()
@@ -929,7 +949,7 @@ class MainWindow(QMainWindow):
 
     def open_cohort_samples_dialog(self, row, col):
         cohort_name = self.cohorts_table.item(row, 0).text()
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT id FROM cohorts WHERE name = ?", (cohort_name,))
             result = cur.fetchone()
@@ -968,7 +988,7 @@ class MainWindow(QMainWindow):
             return
         row = selected[0].row()
         sample_id = self.samples_table.item(row, 0).text()
-        with sqlite3.connect(DB_PATH) as conn:
+        with get_db_connection() as conn:
             cur = conn.cursor()
             cur.execute("SELECT animal_id, species, sex, date_added, notes FROM samples WHERE animal_id = ?", (sample_id,))
             sample = cur.fetchone()
