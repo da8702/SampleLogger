@@ -89,17 +89,17 @@ def get_db_path():
     db_dir = os.path.join(exe_dir, 'db')
     os.makedirs(db_dir, exist_ok=True)
     db_path = os.path.join(db_dir, 'bloodlogger.db')
-    # Find the template in the right place (PyInstaller or dev)
-    if hasattr(sys, '_MEIPASS'):
-        template_path = os.path.join(sys._MEIPASS, 'db', 'bloodlogger_template.db')
-    else:
-        template_path = os.path.join(db_dir, 'bloodlogger_template.db')
-    # Only copy if db doesn't exist and template does
+    schema_path = resource_path(os.path.join('db', 'schema.sql'))
+    print(f"[DEBUG] Looking for schema at: {schema_path}")
+    print(f"[DEBUG] DB will be created at: {db_path}")
     if not os.path.exists(db_path):
-        if os.path.exists(template_path):
-            shutil.copy(template_path, db_path)
+        if os.path.exists(schema_path):
+            import sqlite3
+            with sqlite3.connect(db_path) as conn:
+                with open(schema_path, 'r') as f:
+                    conn.executescript(f.read())
         else:
-            raise RuntimeError(f"Template DB not found at {template_path}")
+            raise RuntimeError(f"Schema file not found at {schema_path}")
     return db_path
 
 DB_PATH = get_db_path()

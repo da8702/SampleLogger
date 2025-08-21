@@ -2,10 +2,15 @@
 
 
 a = Analysis(
-    ['BloodLogger\\ui\\main_window.py'],
+    ['BloodLogger/ui/main_window.py'],
     pathex=[],
     binaries=[],
-    datas=[('BloodLogger/assets', 'assets'), ('BloodLogger/db', 'db')],
+    datas=[
+        ('BloodLogger/assets', 'assets'),
+        ('BloodLogger/db', 'db'),
+        ('BloodLogger/ui/db/bloodlogger_template.db', 'ui/db'),
+        ('BloodLogger/db/schema.sql', 'db'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +40,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['BloodLogger\\assets\\Logo.ico'],
+    icon=['BloodLogger/assets/Logo.ico'],
 )
