@@ -49,14 +49,24 @@ ZPL_TEMPLATE = """
 ^PW315
 ^LL150
 ^LS0
-^BY2,3,87^FT78,128^BCN,,Y,N
+^BY2,3,87^FT{{X_POS}},128^BCN,,Y,N
 ^FH\\^FD>:{{SAMPLE_ID}}^FS
 ^PQ1,0,1,Y
 ^XZ
 """
 
 def print_barcode(sample_id):
-    zpl = ZPL_TEMPLATE.replace("{{SAMPLE_ID}}", sample_id)
+    # Label and barcode parameters
+    label_width = 315  # dots (from ^PW)
+    module_width = 2   # from ^BY2 (dots per module)
+    quiet_zone = 10    # dots, typical for Code128
+    # Code128 encodes each character in about 11 modules (worst case)
+    barcode_length = len(sample_id)
+    modules_per_char = 11
+    barcode_modules = barcode_length * modules_per_char + 35  # 35 for start/stop chars, etc.
+    barcode_width = barcode_modules * module_width + 2 * quiet_zone
+    x_pos = max(0, int((label_width - barcode_width) / 2))
+    zpl = ZPL_TEMPLATE.replace("{{SAMPLE_ID}}", sample_id).replace("{{X_POS}}", str(x_pos))
     printer_name = win32print.GetDefaultPrinter()
     try:
         hPrinter = win32print.OpenPrinter(printer_name)
